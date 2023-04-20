@@ -211,7 +211,7 @@ class FileScanRDD(
         }
       }
 
-      def setQueryMetrics() = {
+      def collectQueryMetrics() = {
         if (currentIterator != null && currentIterator.isInstanceOf[RecordReaderIterator[Object]]) {
           val queryMetrics = currentIterator.asInstanceOf[RecordReaderIterator[Object]]
             .getParquetQueryMetrics()
@@ -224,7 +224,7 @@ class FileScanRDD(
       }
 
       override def close(): Unit = {
-        setQueryMetrics()
+        collectQueryMetrics()
         incTaskInputMetricsBytesRead()
         InputFileBlockHolder.unset()
       }

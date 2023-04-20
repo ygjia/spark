@@ -343,6 +343,10 @@ public class VectorizedParquetRecordReader extends SpecificParquetRecordReaderBa
     totalCountLoadedSoFar += pages.getRowCount();
   }
   public QueryMetrics getParquetQueryMetrics() {
-    return reader.queryMetrics;
+    if(reader != null){
+      return reader.queryMetrics;
+    }else {
+      return new QueryMetrics();
+    }
   }
 }
