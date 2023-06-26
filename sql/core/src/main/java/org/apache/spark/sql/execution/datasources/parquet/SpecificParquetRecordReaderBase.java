@@ -29,6 +29,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.compat.RowGroupFilter;
+import org.apache.parquet.format.converter.ParquetMetadataConverter;
+import org.apache.parquet.hadoop.metadata.BlockMetaData;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import scala.Option;
 
 import org.apache.hadoop.conf.Configuration;
@@ -78,6 +83,8 @@ public abstract class SpecificParquetRecordReaderBase<T> extends RecordReader<Vo
 
   protected ParquetFileReader reader;
 
+  protected ParquetMetadata cachedFooter;
+
   @Override
   public void initialize(InputSplit inputSplit, TaskAttemptContext taskAttemptContext)
       throws IOException, InterruptedException {
@@ -85,21 +92,22 @@ public abstract class SpecificParquetRecordReaderBase<T> extends RecordReader<Vo
     FileSplit split = (FileSplit) inputSplit;
     this.file = split.getPath();
 
-    ParquetReadOptions options = HadoopReadOptions
-      .builder(configuration)
-      .withRange(split.getStart(), split.getStart() + split.getLength())
-      .build();
-    this.reader = new ParquetFileReader(HadoopInputFile.fromPath(file, configuration), options);
-    this.fileSchema = reader.getFileMetaData().getSchema();
-    Map<String, String> fileMetadata = reader.getFileMetaData().getKeyValueMetaData();
+    ParquetMetadata footer = readFooterByRange(configuration, split.getStart(), split.getStart() + split.getLength());
+    this.fileSchema = footer.getFileMetaData().getSchema();
+    FilterCompat.Filter filter = ParquetInputFormat.getFilter(configuration);
+    List<BlockMetaData> blocks =
+            RowGroupFilter.filterRowGroups(filter, footer.getBlocks(), fileSchema);
+    Map<String, String> fileMetadata = footer.getFileMetaData().getKeyValueMetaData();
+
     ReadSupport<T> readSupport = getReadSupportInstance(getReadSupportClass(configuration));
     ReadSupport.ReadContext readContext = readSupport.init(new InitContext(
         taskAttemptContext.getConfiguration(), toSetMultiMap(fileMetadata), fileSchema));
     this.requestedSchema = readContext.getRequestedSchema();
-    reader.setRequestedSchema(requestedSchema);
     String sparkRequestedSchemaString =
         configuration.get(ParquetReadSupport$.MODULE$.SPARK_ROW_REQUESTED_SCHEMA());
     this.sparkSchema = StructType$.MODULE$.fromString(sparkRequestedSchemaString);
+    this.reader = new ParquetFileReader(
+            configuration, footer.getFileMetaData(), file, blocks, requestedSchema.getColumns());
     this.totalRowCount = reader.getFilteredRecordCount();
 
     // For test purpose.
@@ -116,6 +124,29 @@ public abstract class SpecificParquetRecordReaderBase<T> extends RecordReader<Vo
       }
     }
   }
+
+  public void setCachedFooter(ParquetMetadata cachedFooter) {
+    this.cachedFooter = cachedFooter;
+  }
+
+  private ParquetMetadata readFooterByRange(Configuration configuration,
+                                            long start, long end) throws IOException {
+    if (cachedFooter != null) {
+      List<BlockMetaData> filteredBlocks = new ArrayList<>();
+      List<BlockMetaData> blocks = cachedFooter.getBlocks();
+      for (BlockMetaData block : blocks) {
+        long offset = block.getStartingPos();
+        if (offset >= start && offset < end) {
+          filteredBlocks.add(block);
+        }
+      }
+      return new ParquetMetadata(cachedFooter.getFileMetaData(), filteredBlocks);
+    } else {
+      return ParquetFileReader
+              .readFooter(configuration, file, ParquetMetadataConverter.range(start, end));
+    }
+  }
+
 
   /**
    * Returns the list of files at 'path' recursively. This skips files that are ignored normally
