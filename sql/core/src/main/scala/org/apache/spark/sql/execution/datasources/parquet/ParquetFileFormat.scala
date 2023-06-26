@@ -30,7 +30,7 @@ import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 import org.apache.parquet.filter2.compat.FilterCompat
 import org.apache.parquet.filter2.predicate.FilterApi
-import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
+import org.apache.parquet.format.converter.ParquetMetadataConverter.{NO_FILTER, SKIP_ROW_GROUPS}
 import org.apache.parquet.hadoop._
 import org.apache.parquet.hadoop.ParquetOutputFormat.JobSummaryLevel
 import org.apache.parquet.hadoop.codec.CodecConfig
@@ -229,6 +229,10 @@ class ParquetFileFormat
       SQLConf.PARQUET_INT96_AS_TIMESTAMP.key,
       sparkSession.sessionState.conf.isParquetINT96AsTimestamp)
 
+    hadoopConf.setBoolean(
+      SQLConf.FILE_META_CACHE_PARQUET_ENABLED.key,
+      sparkSession.sessionState.conf.fileMetaCacheParquetEnabled)
+
     val broadcastedHadoopConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
@@ -266,17 +270,27 @@ class ParquetFileFormat
 
       val sharedConf = broadcastedHadoopConf.value.value
 
+      val metaCacheEnabled =
+        sharedConf.getBoolean(SQLConf.FILE_META_CACHE_PARQUET_ENABLED.key, false)
+
       S3FileUtils.tryOpenClose(sharedConf, filePath)
       val startTime = System.currentTimeMillis()
-      var fileReader = Option.empty[ParquetFileReader]
-      val fileFooter = if (enableVectorizedReader) {
+
+      val fileFooter = if (metaCacheEnabled) {
+        ParquetFileMeta.readFooterFromCache(filePath, sharedConf)
+      } else if (enableVectorizedReader) {
+        ParquetFooterReader.readFooter(sharedConf, filePath, NO_FILTER)
+      } else {
+        ParquetFooterReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS)
+      }
+
+      val fileReader = if (enableVectorizedReader) {
         // When there are vectorized reads, we can avoid reading the footer twice by reading
         // all row groups in advance and filter row groups according to filters that require
         // push down (no need to read the footer metadata again).
-        fileReader = Option.apply(ParquetFooterReader.reader(sharedConf, file))
-        fileReader.get.getFooter
+        Option.apply(new ParquetFileReader(sharedConf, filePath, fileFooter))
       } else {
-        ParquetFooterReader.readFooter(sharedConf, file, ParquetFooterReader.SKIP_ROW_GROUPS)
+        Option.empty[ParquetFileReader]
       }
       val footerFileMetaData = fileFooter.getFileMetaData
 
@@ -328,6 +342,7 @@ class ParquetFileFormat
       val hadoopAttemptContext =
         new TaskAttemptContextImpl(broadcastedHadoopConf.value.value, attemptId)
 
+      val firstFooterEndTime = System.currentTimeMillis()
       // Try to push down filters when filter push-down is enabled.
       // Notice: This push-down is RowGroups level, not individual records.
       if (pushed.isDefined) {
@@ -337,7 +352,6 @@ class ParquetFileFormat
         }
       }
       val taskContext = Option(TaskContext.get())
-      val firstFooterEndTime = System.currentTimeMillis()
       if (enableVectorizedReader) {
         val vectorizedReader = new VectorizedParquetRecordReader(
           convertTz.orNull,
@@ -355,10 +369,10 @@ class ParquetFileFormat
           vectorizedReader.enableReturningBatches()
         }
         val secondFooterEndTime = System.currentTimeMillis()
-        if ((secondFooterEndTime - startTime) > 100) {
-          logWarning(s"Reading parquet footer cost much time: ${firstFooterEndTime - startTime} ms "
-            + s"and ${secondFooterEndTime - firstFooterEndTime} ms")
-        }
+//        if ((secondFooterEndTime - startTime) > 100) {
+        logWarning(s"Reading parquet footer cost much time: ${firstFooterEndTime - startTime} ms "
+          + s"and ${secondFooterEndTime - firstFooterEndTime} ms")
+//        }
         try {
           if (collectQueryMetricsEnabled) {
             // we should init here (even if it had initial value)
@@ -400,10 +414,10 @@ class ParquetFileFormat
         val fullSchema = requiredSchema.toAttributes ++ partitionSchema.toAttributes
         val unsafeProjection = GenerateUnsafeProjection.generate(fullSchema, fullSchema)
         val footerEndTime = System.currentTimeMillis()
-        if ((footerEndTime - startTime) > 100) {
-          logWarning(s"Reading parquet footer may cost much time: "
-            + s"${firstFooterEndTime - startTime} ms and ${footerEndTime - firstFooterEndTime} ms")
-        }
+//        if ((footerEndTime - startTime) > 100) {
+        logWarning(s"Reading parquet footer may cost much time: "
+          + s"${firstFooterEndTime - startTime} ms and ${footerEndTime - firstFooterEndTime} ms")
+//        }
 
         if (partitionSchema.length == 0) {
           // There is no partition columns
