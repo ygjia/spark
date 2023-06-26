@@ -268,18 +268,8 @@ class ParquetFileFormat
 
       S3FileUtils.tryOpenClose(sharedConf, filePath)
       val startTime = System.currentTimeMillis()
-      var fileReader = Option.empty[ParquetFileReader]
-      val fileFooter = if (enableVectorizedReader) {
-        // When there are vectorized reads, we can avoid reading the footer twice by reading
-        // all row groups in advance and filter row groups according to filters that require
-        // push down (no need to read the footer metadata again).
-        fileReader = Option.apply(ParquetFooterReader.reader(sharedConf, file))
-        fileReader.get.getFooter
-      } else {
-        ParquetFooterReader.readFooter(sharedConf, file, ParquetFooterReader.SKIP_ROW_GROUPS)
-      }
-      val footerFileMetaData = fileFooter.getFileMetaData
-
+      lazy val footerFileMetaData =
+        ParquetFooterReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS).getFileMetaData
       val datetimeRebaseMode = DataSourceUtils.datetimeRebaseMode(
         footerFileMetaData.getKeyValueMetaData.get,
         datetimeRebaseModeInRead)
@@ -332,9 +322,6 @@ class ParquetFileFormat
       // Notice: This push-down is RowGroups level, not individual records.
       if (pushed.isDefined) {
         ParquetInputFormat.setFilterPredicate(hadoopAttemptContext.getConfiguration, pushed.get)
-        if (fileReader.isDefined) {
-          fileReader.get.resetBlocks(hadoopAttemptContext.getConfiguration)
-        }
       }
       val taskContext = Option(TaskContext.get())
       val firstFooterEndTime = System.currentTimeMillis()
@@ -348,7 +335,7 @@ class ParquetFileFormat
         val iter = new RecordReaderIterator(vectorizedReader)
         // SPARK-23457 Register a task completion listener before `initialization`.
         taskContext.foreach(_.addTaskCompletionListener[Unit](_ => iter.close()))
-        vectorizedReader.initialize(split, hadoopAttemptContext, fileReader)
+        vectorizedReader.initialize(split, hadoopAttemptContext)
         logDebug(s"Appending $partitionSchema ${file.partitionValues}")
         vectorizedReader.initBatch(partitionSchema, file.partitionValues)
         if (returningBatch) {
