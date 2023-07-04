@@ -25,7 +25,6 @@ import scala.collection.JavaConverters._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter.{range, NO_FILTER}
-import org.apache.parquet.hadoop.ParquetFileReader.readFooter
 import org.apache.parquet.hadoop.metadata.{BlockMetaData, ParquetMetadata}
 
 object ParquetFileMetaUtils {
@@ -44,7 +43,7 @@ object ParquetFileMetaUtils {
       new ParquetMetadata(cachedFooter.getFileMetaData, filteredBlocks)
     }
     else {
-      readFooter(configuration, file, range(start, end))
+      ParquetFooterReader.readFooter(configuration, file, range(start, end))
     }
   }
 
@@ -55,7 +54,7 @@ object ParquetFileMetaUtils {
       ParquetFileMeta.readFooterFromCache(file, configuration)
     }
     else {
-      readFooter(configuration, file, NO_FILTER)
+      ParquetFooterReader.readFooter(configuration, file, NO_FILTER)
     }
   }
 }

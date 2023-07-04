@@ -30,7 +30,7 @@ import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 import org.apache.parquet.filter2.compat.FilterCompat
 import org.apache.parquet.filter2.predicate.FilterApi
-import org.apache.parquet.format.converter.ParquetMetadataConverter.{NO_FILTER, SKIP_ROW_GROUPS}
+import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
 import org.apache.parquet.hadoop._
 import org.apache.parquet.hadoop.ParquetOutputFormat.JobSummaryLevel
 import org.apache.parquet.hadoop.codec.CodecConfig
@@ -276,10 +276,8 @@ class ParquetFileFormat
       S3FileUtils.tryOpenClose(sharedConf, filePath)
       val startTime = System.currentTimeMillis()
 
-      val fileFooter = if (metaCacheEnabled) {
-        ParquetFileMeta.readFooterFromCache(filePath, sharedConf)
-      } else if (enableVectorizedReader) {
-        ParquetFooterReader.readFooter(sharedConf, filePath, NO_FILTER)
+      val fileFooter = if (enableVectorizedReader) {
+        ParquetFileMetaUtils.readFooterByNoFilter(metaCacheEnabled, sharedConf, filePath)
       } else {
         ParquetFooterReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS)
       }
