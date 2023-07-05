@@ -1020,7 +1020,13 @@ object SQLConf {
     buildConf("spark.sql.fileMetaCache.ttlSinceLastAccess")
     .doc("Time-to-live for file metadata cache entry after last access, the unit is seconds.")
     .timeConf(TimeUnit.SECONDS)
-    .createWithDefault(3600L)
+    .createWithDefault(86400L)
+
+  val FILE_META_CACHE_MAX_SIZE =
+    buildConf("spark.sql.fileMetaCache.maxSize")
+      .doc("Maximum capacity of the file metadata cache")
+      .intConf
+      .createWithDefault(20000)
 
   val ORC_COMPRESSION = buildConf("spark.sql.orc.compression.codec")
     .doc("Sets the compression codec used when writing ORC files. If either `compression` or " +
