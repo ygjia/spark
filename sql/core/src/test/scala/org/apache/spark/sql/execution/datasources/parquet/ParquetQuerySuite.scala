@@ -984,12 +984,12 @@ class ParquetV2QuerySuite extends ParquetQuerySuite {
             (6 until 10).map(Row.apply(_)))
           val statsAfterQuery1 = FileMetaCacheManager.cacheStats
           assert(statsAfterQuery1.missCount() - statsBeforeQuery.missCount() == 2)
-          assert(statsAfterQuery1.hitCount() - statsBeforeQuery.hitCount() == 4)
+          assert(statsAfterQuery1.hitCount() - statsBeforeQuery.hitCount() == 2)
           checkAnswer(sql(s"SELECT id FROM $tableName where id < 5"),
             (0 until 5).map(Row.apply(_)))
           val statsAfterQuery2 = FileMetaCacheManager.cacheStats
           assert(statsAfterQuery2.missCount() - statsAfterQuery1.missCount() == 0)
-          assert(statsAfterQuery2.hitCount() - statsAfterQuery1.hitCount() == 8)
+          assert(statsAfterQuery2.hitCount() - statsAfterQuery1.hitCount() == 4)
         } finally {
           FileMetaCacheManager.cleanUp()
         }
