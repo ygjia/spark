@@ -274,13 +274,14 @@ class ParquetFileFormat
         sharedConf.getBoolean(SQLConf.FILE_META_CACHE_PARQUET_ENABLED.key, false)
 
       S3FileUtils.tryOpenClose(sharedConf, filePath)
-      val startTime = System.currentTimeMillis()
+      val footerStartTime = System.currentTimeMillis()
 
       val fileFooter = if (enableVectorizedReader) {
         ParquetFileMetaUtils.readFooterByNoFilter(metaCacheEnabled, sharedConf, filePath)
       } else {
         ParquetFooterReader.readFooter(sharedConf, filePath, SKIP_ROW_GROUPS)
       }
+      val footerFileMetaData = fileFooter.getFileMetaData
 
       val fileReader = if (enableVectorizedReader) {
         // When there are vectorized reads, we can avoid reading the footer twice by reading
@@ -290,7 +291,6 @@ class ParquetFileFormat
       } else {
         Option.empty[ParquetFileReader]
       }
-      val footerFileMetaData = fileFooter.getFileMetaData
 
       val datetimeRebaseMode = DataSourceUtils.datetimeRebaseMode(
         footerFileMetaData.getKeyValueMetaData.get,
@@ -340,7 +340,6 @@ class ParquetFileFormat
       val hadoopAttemptContext =
         new TaskAttemptContextImpl(broadcastedHadoopConf.value.value, attemptId)
 
-      val firstFooterEndTime = System.currentTimeMillis()
       // Try to push down filters when filter push-down is enabled.
       // Notice: This push-down is RowGroups level, not individual records.
       if (pushed.isDefined) {
@@ -366,11 +365,11 @@ class ParquetFileFormat
         if (returningBatch) {
           vectorizedReader.enableReturningBatches()
         }
-        val secondFooterEndTime = System.currentTimeMillis()
-//        if ((secondFooterEndTime - startTime) > 100) {
-        logWarning(s"Reading parquet footer cost much time: ${firstFooterEndTime - startTime} ms "
-          + s"and ${secondFooterEndTime - firstFooterEndTime} ms")
-//        }
+        val footerEndTime = System.currentTimeMillis()
+        if ((footerEndTime - footerStartTime) > 100) {
+          logWarning(s"VectorizedReader read parquet footer cost " +
+            s"much time: ${footerEndTime - footerStartTime}ms")
+        }
         try {
           if (collectQueryMetricsEnabled) {
             // we should init here (even if it had initial value)
@@ -381,7 +380,7 @@ class ParquetFileFormat
               file.queryMetrics(1) = info.getSkipBloomBlocks
               file.queryMetrics(2) = info.getSkipBloomRows
             }
-            file.queryMetrics(3) = secondFooterEndTime - startTime
+            file.queryMetrics(3) = footerEndTime - footerStartTime
           }
         } catch {
           case e: Throwable =>
@@ -412,10 +411,9 @@ class ParquetFileFormat
         val fullSchema = requiredSchema.toAttributes ++ partitionSchema.toAttributes
         val unsafeProjection = GenerateUnsafeProjection.generate(fullSchema, fullSchema)
         val footerEndTime = System.currentTimeMillis()
-//        if ((footerEndTime - startTime) > 100) {
-        logWarning(s"Reading parquet footer may cost much time: "
-          + s"${firstFooterEndTime - startTime} ms and ${footerEndTime - firstFooterEndTime} ms")
-//        }
+        if ((footerEndTime - footerStartTime) > 100) {
+          logWarning(s"Reading parquet footer cost much time: ${footerEndTime - footerStartTime}ms")
+        }
 
         if (partitionSchema.length == 0) {
           // There is no partition columns
