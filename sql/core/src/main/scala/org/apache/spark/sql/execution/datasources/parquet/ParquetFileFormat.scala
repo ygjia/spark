@@ -264,6 +264,7 @@ class ParquetFileFormat
 
     (file: PartitionedFile) => {
       assert(file.partitionValues.numFields == partitionSchema.size)
+      logWarning(s"For test spark ut")
 
       val filePath = new Path(new URI(file.filePath))
       val split = new FileSplit(filePath, file.start, file.length, Array.empty[String])
